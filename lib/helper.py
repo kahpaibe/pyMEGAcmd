@@ -2,6 +2,7 @@ from abc import ABC
 from dataclasses import dataclass
 
 class MEGAcmdWrapperABC(ABC):
+    """Generic class to keep track of MEGAcmd commands."""
     def cmd_attr(self):
         raise NotImplementedError
     
@@ -251,6 +252,24 @@ class MEGAcmdWrapperABC(ABC):
     
 @dataclass
 class CMDResult:
+    """Generic commandline result."""
     stdout: str
     stderr: str
     return_code: int
+
+def clean_remote_path(remote_path: str, ensure_trailing_slash: bool = False) -> str:
+    """Cleans up remote path by stripping with relevant characters."""
+    p = remote_path.lstrip(" \n")
+    if p.startswith("./"):
+        p = p[2:] # Remove leading ./    
+    if ensure_trailing_slash and not p.endswith("/"):
+        p += "/"
+    return p
+
+def clean_local_path(local_path: str, ensure_trailing_slash: bool = False) -> str:
+    """Cleans up local path by stripping with relevant characters."""
+    p = local_path.lstrip(" \n")
+    p = p.rstrip("/")
+    if ensure_trailing_slash and not p.endswith("/"):
+        p += "/"
+    return p

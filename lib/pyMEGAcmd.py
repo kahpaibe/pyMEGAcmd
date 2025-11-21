@@ -1,6 +1,6 @@
-from .lib.helper import MEGAcmdWrapperABC, CMDResult
+from .helper import MEGAcmdWrapperABC, CMDResult, clean_remote_path, clean_local_path
 import subprocess
-from typing import Optional, Literal
+from typing import Optional, Literal, Iterable
 import re
 from dataclasses import dataclass
 import logging
@@ -32,13 +32,14 @@ class MEGAExportEntry:
 
 class MEGAcmdWrapper(MEGAcmdWrapperABC):
     """Wrapper for MEGAclient command line tool (MEGAcmd)."""
-    RE_WHOAMI_EMAIL = re.compile(r'Account e-mail: (.+?)$')
-    RE_LOGOUT_SESSION = re.compile(r'session id: (.+?)$')
     RE_EXPORT__LIST_FILE = re.compile(r'^(.+) \(([^,]+), shared as exported permanent file link: ([^\)]+)\)$')
     RE_EXPORT__LIST_FOLDER = re.compile(r'^(.+) \(folder, shared as exported permanent folder link: ([^\)]+)\)$')
     RE_EXPORT__LIST_AUTHTOKEN = re.compile(r'^(.+) AuthToken=(.+?)$')
     RE_EXPORT__ADD_FOLDER = re.compile(r'^Exported (.+?): (ht.+?)\n\s+AuthToken = (.+)$')
     RE_EXPORT__ADD_FILE = re.compile(r'^Exported (.+?): (ht.+?)$')
+    RE_LOGOUT_SESSION = re.compile(r'session id: (.+?)$')
+    RE_SESSION = re.compile(r'^Your \(secret\) session is:\s+(.+)$')
+    RE_WHOAMI_EMAIL = re.compile(r'Account e-mail: (.+?)$')
 
     def __init__(self, mega_cmd_path: str, check_path: bool = True) -> None:
         """Wrapper for MEGAclient command line tool (MEGAcmd).
@@ -73,6 +74,63 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
         LOGGER.debug(f'Command returned {cmd_res=}')
         return cmd_res
 
+    def cmd_get(
+            self,
+            path_remote: str,
+            path_local: Optional[str] = None,
+            password: Optional[str] = None, 
+        ) -> bool:
+        """Download a file or folder.
+        
+        Args:
+            path_remote (str): Remote path to file or folder to download.
+            path_local (Optional[str]): Local path to download to. If None, will be current local directory.
+            password (Optional[str]): Password for password-protected links. Defaults to None.
+        
+        Return:
+            bool: True if download was successful, False otherwise.
+        
+        Raises:
+            RuntimeError: If download fails, error details will be included in the exception message. 
+        
+        Note:
+            - If downloading a file:
+                - If path_local is a directory, file will be downloaded into that directory with its original name.
+                - If path_local is a file path, file will be downloaded and saved with that name.
+            - If downloading a folder:
+                - If path_local is a directory, folder content will be downloaded into that directory.
+                - If path_local is a non-existing path, will raise RuntimeError.
+        
+        TODO: add support for exportedlink.
+        """
+        command = ["get", "-m"]
+        command += [] if password is None else [f"--password={password}"]
+        command += [clean_remote_path(path_remote)] # Remove trailing slash for consistency
+        command += [] if path_local is None else [clean_local_path(path_local)]
+        res = self._run_mega_cmd(command)
+
+        if res.return_code == 0:
+            if "Download finished" in res.stdout:
+                return True
+
+        elif res.return_code == 53: # Not found
+            LOGGER.error(f"Remote path not found: {res}")
+            raise RuntimeError(f"Remote path not found: {res}")
+        
+        elif res.return_code == 54: # Local path error
+            LOGGER.error(f"Local path error: {res}")
+            raise RuntimeError(f"Local path error: {res}")
+        
+        elif res.return_code == 55: # Invalid download folder
+            LOGGER.error(f"Invalid download folder (folder does not exist): {res}")
+            raise RuntimeError(f"Invalid download folder (folder does not exist): {res}")
+        
+        elif res.return_code != 0:
+            LOGGER.error(f"Failed to get file/folder: {res}")
+            raise RuntimeError(f"Failed to get file/folder: {res}")
+
+        return False
+    
     def cmd_export(
             self, 
             action: Literal['add', 'delete', 'list'], 
@@ -128,7 +186,7 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
             MEGAExportEntry | None: Export entry if successful, None otherwise.
         Note: MEGAExportEntry.size will always be None (not known).
         """
-        command = ["export", "-f", "-a", remote_path]
+        command = ["export", "-f", "-a", clean_remote_path(remote_path)]
         command += [] if not writeable else ["--writable"]
         command += [] if password is None else [f"--password={password}"]
         res = self._run_mega_cmd(command)
@@ -163,7 +221,7 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
         Returns:
             bool: True if deletion was successful, False otherwise.
         """
-        command = ["export", "-d", remote_path]
+        command = ["export", "-d", clean_remote_path(remote_path)]
         res = self._run_mega_cmd(command)
         if res.return_code != 0:
             LOGGER.error("Failed to delete export:\n" + res.stderr)
@@ -181,7 +239,7 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
         Returns:
             list[MEGAExportEntry]: List of export entries.
         """
-        command = ["export"] + ([] if remote_path is None else [remote_path])
+        command = ["export"] + ([] if remote_path is None else [clean_remote_path(remote_path)])
         res = self._run_mega_cmd(command)
         if res.return_code != 0:
             LOGGER.error("Failed to list exports:\n" + res.stderr)
@@ -288,7 +346,7 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
     
     def cmd_ls(self, remote_path: str = '/') -> list[MEGADirectoryEntry]:
         """"""
-        command = ["ls", "-hal", "--show-handles", remote_path]
+        command = ["ls", "-hal", "--show-handles", clean_remote_path(remote_path)]
 
         res = self._run_mega_cmd(command)
         if res.return_code != 0:
@@ -319,6 +377,58 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
             dir_entries.append(entry)       
         return dir_entries
     
+    def cmd_put(self, local_path: str | Iterable[str], remote_path: Optional[str] = None) -> bool:
+        """Upload one or more local files/folders to remote path.
+
+        Args:
+            local_path (str | Iterable[str]): Local file or folder path to upload, or an iterator for multiple paths.
+            remote_path (Optional[str]): Remote path to upload to. If None, will upload to current remote directory.
+        Note: 
+            - Remote path must be set when uploading multiple local items.
+            - If multiple local items are provided, remote_path will be assumed to be a directory.
+        """
+        if isinstance(local_path, str):
+            local_paths = [clean_local_path(local_path)]
+        else: # Iterator[str]
+            assert remote_path is not None, "remote_path must be set when uploading multiple local items."
+            local_paths = [clean_local_path(path) for path in local_path]
+        
+        command = ["put", "-c"]
+        command += local_paths
+        command += [] if remote_path is None else [clean_remote_path(remote_path, ensure_trailing_slash=(len(local_paths) > 1))]
+        res = self._run_mega_cmd(command)
+        
+        if res.return_code == 0:
+            if "Upload finished" in res.stdout:
+                return True
+            
+        elif res.return_code != 0:
+            LOGGER.error("Failed to put file/folder:\n" + res.stderr)
+            return False
+        
+        raise RuntimeError("Unexpected output from put command:\n" + res.stdout)
+    
+    def cmd_session(self) -> str | None:
+        """Get the current session string.
+
+        Returns:
+            str | None: Session if logged in, None otherwise.
+
+        TODO: Untested: session when logged in not as user (exported folder link, password protected link).
+        """
+        res = self._run_mega_cmd(['session'])
+
+        if res.return_code == 0:
+            match = self.RE_SESSION.search(res.stdout)
+            if match:
+                return match.group(1)
+        
+        else: # res.return_code != 0
+            if "Not logged in" in res.stderr:
+                return None 
+            
+        raise NotImplementedError("Unexpected output from session command:\n" + res.stdout)
+    
     def cmd_tree(self, remote_path: Optional[str] = None) -> str:
         """Get the remote directory tree structure.
 
@@ -327,7 +437,7 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
         Returns:
             str: Directory tree structure as a string.
         """
-        command = ["tree"] + ([] if remote_path is None else [remote_path])
+        command = ["tree"] + ([] if remote_path is None else [clean_remote_path(remote_path)])
         res = self._run_mega_cmd(command)
         if res.return_code != 0:
             raise RuntimeError("Failed to get directory tree:\n" + res.stderr)

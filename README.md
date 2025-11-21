@@ -29,12 +29,16 @@ if __name__ == '__main__':
 The wrapper currently supports the following MEGAcmd commands:
 - `export`
 - `cmd_export`
+- `get` (partial)
 - `login` (partial)
 - `logout`
 - `ls`
+- `put`
+- `session`
 - `tree`
 - `version`
 - `whoami`
+
 
 ## License
 
