@@ -1,4 +1,4 @@
-from lib.helper import MEGAcmdWrapperABC, CMDResult
+from .lib.helper import MEGAcmdWrapperABC, CMDResult
 import subprocess
 from typing import Optional, Literal
 import re
@@ -31,6 +31,7 @@ class MEGAExportEntry:
     auth_token: Optional[str] = None # If present
 
 class MEGAcmdWrapper(MEGAcmdWrapperABC):
+    """Wrapper for MEGAclient command line tool (MEGAcmd)."""
     RE_WHOAMI_EMAIL = re.compile(r'Account e-mail: (.+?)$')
     RE_LOGOUT_SESSION = re.compile(r'session id: (.+?)$')
     RE_EXPORT__LIST_FILE = re.compile(r'^(.+) \(([^,]+), shared as exported permanent file link: ([^\)]+)\)$')
@@ -39,14 +40,21 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
     RE_EXPORT__ADD_FOLDER = re.compile(r'^Exported (.+?): (ht.+?)\n\s+AuthToken = (.+)$')
     RE_EXPORT__ADD_FILE = re.compile(r'^Exported (.+?): (ht.+?)$')
 
-    def __init__(self, mega_cmd_path: str) -> None:
-        """
+    def __init__(self, mega_cmd_path: str, check_path: bool = True) -> None:
+        """Wrapper for MEGAclient command line tool (MEGAcmd).
         
         Args:
             mega_cmd_path (str): Path to MEGAclient executable.
+            check_path (bool): Whether to check if the executable path exists upon initialization. Defaults to True.
         """
         super().__init__()
         self.mega_cmd_path = mega_cmd_path
+
+        if check_path: # Check if path exists
+            try: 
+                self.cmd_version()
+            except FileNotFoundError as e:
+                raise FileNotFoundError(f"MEGAclient executable not found at path: {mega_cmd_path}") from e
 
     def _run_mega_cmd(self, args: list[str]) -> CMDResult:
         """
