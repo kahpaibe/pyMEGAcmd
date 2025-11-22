@@ -27,13 +27,19 @@ if __name__ == '__main__':
 ## Current Features
 
 The wrapper currently supports the following MEGAcmd commands:
+- `cat`
+- `cd`
+- `df`
 - `export`
-- `cmd_export`
-- `get` (partial)
+- `get`
+- `import`
 - `login` (partial)
 - `logout`
+- `lcd`
+- `lpwd`
 - `ls`
 - `put`
+- `pwd`
 - `session`
 - `tree`
 - `version`

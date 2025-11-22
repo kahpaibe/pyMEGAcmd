@@ -269,7 +269,6 @@ def clean_remote_path(remote_path: str, ensure_trailing_slash: bool = False) -> 
 def clean_local_path(local_path: str, ensure_trailing_slash: bool = False) -> str:
     """Cleans up local path by stripping with relevant characters."""
     p = local_path.lstrip(" \n")
-    p = p.rstrip("/")
     if ensure_trailing_slash and not p.endswith("/"):
         p += "/"
     return p
