@@ -10,14 +10,18 @@ LOGGER = logging.getLogger(__name__)  # Logger
 
 @dataclass
 class MEGADirectoryEntry:
-    """Used for MEGAcmdWrapper.cmd_ls results."""
+    """Used for 
+        MEGAcmdWrapper.cmd_ls
+        MEGAcmdWrapper.cmd_find     
+    results."""
 
     name: str  # Name of the file or directory
-    date: str
     handle: str  # Handle identifier
     is_directory: bool  # True if directory, False if file
-    flags: str  # Entry flags (e.g., '-ep-')
+    flags: Optional[str] = None  # Entry flags (e.g., '-ep-')
+    date: Optional[str] = None  # Date string
     size: Optional[str] = None  # Size (for files)
+    link: Optional[str] = None  # Exported link if applicable
 
 
 @dataclass
@@ -53,6 +57,21 @@ class MEGAExportEntry:
     is_folder: bool = False
     auth_token: Optional[str] = None  # If present
 
+@dataclass
+class MEGADuEntry:
+    """Used for MEGAcmdWrapper.cmd_du results."""
+
+    remote_path: str
+    size: int  # Bytes, size of the file or folder
+    size_with_versions: int  # Bytes, size including file versions
+
+@dataclass
+class MEGADuResult:
+    """Used for MEGAcmdWrapper.cmd_du results."""
+
+    entries: list[MEGADuEntry]
+    size_total: int  # Bytes, total size of all entries
+    size_total_with_versions: int  # Bytes, total size including file versions
 
 class MEGAcmdWrapper(MEGAcmdWrapperABC):
     """Wrapper for MEGAclient command line tool (MEGAcmd)."""
@@ -68,6 +87,8 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
     )
     RE_DF_TOTAL = re.compile(r"USED STORAGE:\s+(\d+)\s+([\d\.]+)% of\s+(\d+)")
     RE_DF_VERSIONS = re.compile(r"Total size taken up by file versions:\s+(\d+)")
+    RE_DU_TOTAL = re.compile(r"^Total storage used:\s+(\d+)\s+(\d+)$")
+    RE_DU_ENTRY = re.compile(r"^([^:]+):\s+(\d+)\s+(\d+)$")
     RE_EXPORT__LIST_FILE = re.compile(
         r"^(.+) \(([^,]+), shared as exported permanent file link: ([^\)]+)\)$"
     )
@@ -79,6 +100,10 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
         r"^Exported (.+?): (ht.+?)\n\s+AuthToken = (.+)$"
     )
     RE_EXPORT__ADD_FILE = re.compile(r"^Exported (.+?): (ht.+?)$")
+    RE_FIND_FILE_EXPORTED = re.compile(r"^([^<]+) <([\w\d:]+)> \(([^,\)]+),[^:]+: (.+)\)$")
+    RE_FIND_FILE = re.compile(r"^([^<]+) <([\w\d:]+)> \(([^\)]+)\)$")
+    RE_FIND_FOLDER_EXPORTED = re.compile(r"^([^<]+) <([\w\d:]+)> \(folder, [^:]+: (.+)\)$")
+    RE_FIND_FOLDER = re.compile(r"^([^<]+) <([\w\d:]+)> \(folder\)$")
     RE_LOGOUT_SESSION = re.compile(r"session id: (.+?)$")
     RE_SESSION = re.compile(r"^Your \(secret\) session is:\s+(.+)$")
     RE_WHOAMI_EMAIL = re.compile(r"Account e-mail: (.+?)$")
@@ -244,6 +269,47 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
 
         raise RuntimeError("Failed to get storage usage:\n" + res.stderr)
 
+    def cmd_du(self, remote_paths: Iterable[str]) -> MEGADuResult:
+        """Get disk usage of remote files/folders.
+        
+        Args:
+            remote_paths (Iterable[str]): Iterable of remote file or folder paths to get disk usage for.
+        Returns:
+            MEGADuResult: Disk usage information for the provided remote paths.
+        Raises:
+            RuntimeError: If the command fails.
+        """
+        assert not isinstance(
+            remote_paths, str
+        ), "remote_paths must be an iterable of strings, not a string."
+        command = ["du", "--versions"]
+        command += [clean_remote_path(path) for path in remote_paths]
+        res = self._run_mega_cmd(command)
+        if res.return_code != 0:
+            raise RuntimeError(f"Failed to get disk usage: {res.stderr}")
+        entries: list[MEGADuEntry] = []
+        total_size = total_size_with_versions = 0
+        for line in res.stdout.strip().splitlines():
+            sline = line.strip()
+            match_total = self.RE_DU_TOTAL.match(sline)
+            match_entry = self.RE_DU_ENTRY.match(sline)
+            if match_total:
+                total_size = int(match_total.group(1))
+                total_size_with_versions = int(match_total.group(2))
+            elif match_entry:
+                path, size, size_with_versions = match_entry.groups()
+                entry = MEGADuEntry(
+                    remote_path=path,
+                    size=int(size),
+                    size_with_versions=int(size_with_versions),
+                )
+                entries.append(entry)
+        return MEGADuResult(
+            entries=entries,
+            size_total=total_size,
+            size_total_with_versions=total_size_with_versions,
+        )
+
     def cmd_export(
         self,
         action: Literal["add", "delete", "list"],
@@ -400,6 +466,88 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
             )
             entries.append(entry)
 
+        return entries
+
+    def cmd_find(
+            self, 
+            remote_path: Optional[str] = None, 
+            pattern: Optional[str] = None,
+            time_constraint: Optional[str] = None,
+            size_constraint: Optional[str] = None,
+        ) -> list[MEGADirectoryEntry]:
+        """Find files and folders in remote directory tree.
+
+        Args:
+            remote_path (Optional[str]): Remote path to start search from. If None, will be current remote directory.
+            pattern (Optional[str]): Pattern to match file/folder names against. If None, will match all names.
+            time_constraint (Optional[str]): Time constraint for filtering files/folders.
+            size_constraint (Optional[str]): Size constraint for filtering files/folders.
+        Returns:
+            list[MEGADirectoryEntry]: List of found directory entries.
+        
+        Note:
+            Date and flags will always be None (not provided by MEGAcmd).
+            Size only applicable for files.
+            Link will be provided for exported files/folders.
+        """
+        command = ["find", "-l", "--show-handles"] 
+        command += [] if time_constraint is None else [f"--mtime={time_constraint}"]
+        command += [] if size_constraint is None else [f"--size={size_constraint}"]
+        command += [] if remote_path is None else [clean_remote_path(remote_path)]
+        command += [] if pattern is None else [f"--pattern={pattern}"]
+        res = self._run_mega_cmd(command)
+
+        if res.return_code != 0:
+            raise RuntimeError("Failed to find files/folders:\n" + res.stderr)
+
+        entries: list[MEGADirectoryEntry] = []
+        for line in res.stdout.strip().splitlines():
+            sline = line.strip()
+            if sline:
+                match_folder_e = self.RE_FIND_FOLDER_EXPORTED.match(sline)
+                match_folder = self.RE_FIND_FOLDER.match(sline)
+                match_file_e = self.RE_FIND_FILE_EXPORTED.match(sline)
+                match_file = self.RE_FIND_FILE.match(sline)
+                if match_folder_e:
+                    name, handle, link = match_folder_e.groups()
+                    entry = MEGADirectoryEntry(
+                        name=name,
+                        handle=handle,
+                        is_directory=True,
+                        link=link
+                    )
+                    entries.append(entry)
+                elif match_folder:
+                    name, handle = match_folder.groups()
+                    entry = MEGADirectoryEntry(
+                        name=name,
+                        handle=handle,
+                        is_directory=True,
+                        link=None
+                    )
+                    entries.append(entry)
+                elif match_file_e:
+                    name, handle, size, link = match_file_e.groups()
+                    entry = MEGADirectoryEntry(
+                        name=name,
+                        handle=handle,
+                        is_directory=False,
+                        size=size,
+                        link=link
+                    )
+                    entries.append(entry)
+                elif match_file:
+                    name, handle, size = match_file.groups()
+                    entry = MEGADirectoryEntry(
+                        name=name,
+                        handle=handle,
+                        is_directory=False,
+                        size=size,
+                        link=None
+                    )
+                    entries.append(entry)
+                else:
+                    raise RuntimeError("Unexpected find line format:\n" + line)
         return entries
 
     def cmd_get(
@@ -594,7 +742,17 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
         return res.stdout.strip()
     
     def cmd_ls(self, remote_path: str = "/") -> list[MEGADirectoryEntry]:
-        """"""
+        """List remote directory contents.
+        
+        Args:
+            remote_path (str): Remote path to list. Defaults to root ("/").
+        Returns:
+            list[MEGADirectoryEntry]: List of directory entries.
+        Raises:
+            RuntimeError: If the command fails.
+        
+        Note: Link will not be included in the results.
+        """
         command = ["ls", "-hal", "--show-handles", clean_remote_path(remote_path)]
 
         res = self._run_mega_cmd(command)

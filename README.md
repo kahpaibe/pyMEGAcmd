@@ -30,7 +30,9 @@ The wrapper currently supports the following MEGAcmd commands:
 - `cat`
 - `cd`
 - `df`
+- `du`
 - `export`
+- `find`
 - `get`
 - `import`
 - `login` (partial)
@@ -45,6 +47,9 @@ The wrapper currently supports the following MEGAcmd commands:
 - `version`
 - `whoami`
 
+## TODO
+- Implement additional MEGAcmd commands
+- Add support for pcre for commands that support it
 
 ## License
 
