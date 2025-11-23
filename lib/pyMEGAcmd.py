@@ -164,7 +164,7 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
         """
         assert not isinstance(
             remote_paths, str
-        ), "remote_paths must be an iterable of strings, not a string."
+        ), "remote_paths must be an iterable of strings, but not a string."
         command = ["cat"]
         command += [clean_remote_path(path) for path in remote_paths]
         res = self._run_mega_cmd(command)
@@ -206,6 +206,35 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
 
         raise RuntimeError(f"Failed to change directory: {res.stderr}")
 
+    def cmd_cp(self, remote_path_sources: Iterable[str], remote_path_destination: str) -> bool:
+        """Copy remote files or folders to remote destination.
+
+        Args:
+            remote_path_sources (Iterable[str]): Remote file or folder paths to copy.
+            remote_path_destination (str): Remote destination path to copy to.
+        
+        Notes:
+            - If copying one folder to a new location, don't forget NOT to add trailing slash in destination path (the folder will be copied with the new name).
+            - Overriding existing files/folders will happen without prompt.
+        TODO: add support for "dstemail" (well it should be supported but not tested)   
+        """
+        assert not isinstance(
+            remote_path_sources, str
+        ), "remote_path_sources must be an iterable of strings, but not a string."
+        command = ["cp"]
+        command += [clean_remote_path(path) for path in remote_path_sources]
+        command += [clean_remote_path(remote_path_destination, ensure_trailing_slash=False)]
+        res = self._run_mega_cmd(command)
+
+        if res.return_code == 0:
+            return True
+        
+        elif res.return_code == 53:  # Not found
+            LOGGER.error(f"At least one source or destination not found, but others may have been successfully copied: {res}")
+            return False
+        
+        raise RuntimeError(f"Failed to copy remote file(s)/folder(s): {res}")
+    
     def cmd_df(self) -> MEGADiskFreeResult:
         """Get remote storage usage information.
 
@@ -281,7 +310,7 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
         """
         assert not isinstance(
             remote_paths, str
-        ), "remote_paths must be an iterable of strings, not a string."
+        ), "remote_paths must be an iterable of strings, but not a string."
         command = ["du", "--versions"]
         command += [clean_remote_path(path) for path in remote_paths]
         res = self._run_mega_cmd(command)
@@ -784,6 +813,60 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
             dir_entries.append(entry)
         return dir_entries
 
+    def cmd_mkdir(self, remote_path: str) -> bool:
+        """Create remote directory.
+        
+        Args:
+            remote_path (str): Remote path of the directory to create.
+        Returns:
+            bool: True if directory was created successfully, False otherwise.
+        Raises:
+            RuntimeError: If the command fails for a reason not covered.
+
+        Note: will create parent directories as needed.
+        """
+        command = ["mkdir", "-p", clean_remote_path(remote_path)]
+        res = self._run_mega_cmd(command)
+
+        if res.return_code == 0:
+            return True
+        
+        elif res.return_code == 54: # Already exists
+            LOGGER.warning(f"Remote path already exists (folder or file): {res}")
+            return False
+        
+        else:
+            LOGGER.error(f"Failed to create remote directory: {res}")
+            raise RuntimeError("Failed to create remote directory:\n" + res.stderr) 
+
+    def cmd_mv(self, remote_path_sources: Iterable[str], remote_path_destination: str) -> bool:
+        """Move remote files or folders to remote destination.
+
+        Args:
+            remote_path_sources (Iterable[str]): Remote file or folder paths to move.
+            remote_path_destination (str): Remote destination path to move to.
+        
+        Notes:
+            - If moving one folder to a new location, don't forget NOT to add trailing slash in destination path (the folder will be moved with the new name).
+            - Overriding existing files/folders will happen without prompt.
+        """
+        assert not isinstance(
+            remote_path_sources, str
+        ), "remote_path_sources must be an iterable of strings, but not a string."
+        command = ["mv"]
+        command += [clean_remote_path(path) for path in remote_path_sources]
+        command += [clean_remote_path(remote_path_destination, ensure_trailing_slash=False)]
+        res = self._run_mega_cmd(command)
+
+        if res.return_code == 0:
+            return True
+        
+        elif res.return_code == 53:  # Not found
+            LOGGER.error(f"At least one source or destination not found, but others may have been successfully copied: {res}")
+            return False
+        
+        raise RuntimeError(f"Failed to move remote file(s)/folder(s): {res}")
+
     def cmd_put(
         self, local_path: str | Iterable[str], remote_path: Optional[str] = None
     ) -> bool:
@@ -843,6 +926,26 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
 
         raise RuntimeError(f"Failed to get current directory: {res.stderr}")
 
+    def cmd_rm(self, remote_path: str) -> bool:
+        """Remove remote file or folder.
+        
+        Args:
+            remote_path (str): Remote path to file or folder to remove.
+        Returns:
+            bool: True if removal was successful, False otherwise.
+        Raises:
+            RuntimeError: If the command fails for a reason not covered.
+        """
+        command = ["rm", "-r", "-f", clean_remote_path(remote_path)]
+        res = self._run_mega_cmd(command)
+        if res.return_code == 0:
+            return True
+        elif res.return_code == 53:  # Not found
+            LOGGER.error(f"Remote path not found: {res}")
+            return False
+        
+        raise RuntimeError(f"Failed to remove remote file/folder: {res}")
+    
     def cmd_session(self) -> str | None:
         """Get the current session string.
 

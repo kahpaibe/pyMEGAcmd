@@ -29,6 +29,7 @@ if __name__ == '__main__':
 The wrapper currently supports the following MEGAcmd commands:
 - `cat`
 - `cd`
+- `cp`
 - `df`
 - `du`
 - `export`
@@ -40,8 +41,11 @@ The wrapper currently supports the following MEGAcmd commands:
 - `lcd`
 - `lpwd`
 - `ls`
+- `mkdir`
+- `mv`
 - `put`
 - `pwd`
+- `rm`
 - `session`
 - `tree`
 - `version`
@@ -50,6 +54,7 @@ The wrapper currently supports the following MEGAcmd commands:
 ## TODO
 - Implement additional MEGAcmd commands
 - Add support for pcre for commands that support it
+- Homogenize error handling and exceptions (use more raise), provide new Exception class with `error_code` attribute
 
 ## License
 
