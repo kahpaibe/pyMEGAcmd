@@ -673,7 +673,14 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
         auth_code: Optional[str] = None,
         session: Optional[str] = None,
     ) -> bool:
-        """Log in to MEGA account.
+        """Login command wrapper.
+
+        Note: It is recommended to use the specific subcommand methods instead:
+            - cmd_login__user
+            - cmd_login__session
+            - cmd_login__exported_folder (TODO)
+            - cmd_login__password_protected_link (TODO)
+        as they provide better type hints and clarity.
 
         Args:
             USER LOGIN:
@@ -701,23 +708,69 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
             assert (
                 email is not None and password is not None
             ), "Email and password are required for user login."
-            command = ["login", email, password]
-            if auth_code:
-                command.append(f"--auth-code={auth_code}")
-            res = self._run_mega_cmd(command)
-
-            if res.return_code != 0:
-                return False
-            return True
+            return self.cmd_login__user(email, password, auth_code)
         elif is_session_login:
             assert session is not None, "Session string is required for session login."
-            command = ["login", session]
-            res = self._run_mega_cmd(command)
-
-            if res.return_code != 0:
-                return False
-            return True
+            return self.cmd_login__session(session)
         return False  # Fallback, should not reach here.
+
+    def cmd_login__user(
+        self,
+        email: str,
+        password: str,
+        auth_code: Optional[str] = None,
+    ) -> bool:
+        """Login subcommand, user login.
+        
+        Args:
+            email (str): User email.
+            password (str): User password.
+            auth_code (Optional[str]): Two-factor authentication code if applicable.
+        Returns:
+            bool: True if login was successful, False otherwise.
+        """
+        command = ["login", email, password]
+        if auth_code:
+            command.append(f"--auth-code={auth_code}")
+        res = self._run_mega_cmd(command)
+
+        if res.return_code != 0:
+            return False
+        return True
+    
+    def cmd_login__session(self, session: str) -> bool:
+        """Login subcommand, session login.
+        
+        Args:
+            session (str): Session string.
+        Returns:
+            bool: True if login was successful, False otherwise.
+        """
+        command = ["login", session]
+        res = self._run_mega_cmd(command)
+
+        if res.return_code != 0:
+            return False
+        return True
+
+    def cmd_login__exported_folder(self, exported_folder_link: str, resume: bool = False) -> bool:
+        """Login subcommand, exported folder URL login.
+        
+        Args:
+            exported_folder_link (str): Exported folder link.
+            resume (bool): Whether to resume from cache. Please refer to MEGAcmd documentation. Defaults to False.
+        """
+        command = ["login", exported_folder_link]
+        if resume:
+            command.append("--resume")
+        res = self._run_mega_cmd(command)
+        print(res)
+
+        if res.return_code != 0:
+            return False
+        return True
+    
+    # def cmd_login__password_protected_link(self, link: str, password: str) -> bool:
 
     def cmd_logout(self, keep_session: bool = False) -> tuple[bool, None | str]:
         """Log out from MEGA account.
@@ -1001,8 +1054,12 @@ class MEGAcmdWrapper(MEGAcmdWrapperABC):
 
         Returns:
             str | None: Logged in user email or None if not logged in.
+
+        Note: if logged in with exported folder link or password protected link, will return None.
         """
         res = self._run_mega_cmd(["whoami"])
+
+        print(res)
 
         # Not logged in or error
         if res.return_code != 0:
